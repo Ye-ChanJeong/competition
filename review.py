@@ -27,6 +27,7 @@ def review(password):
     if not result:
         st.error(f"❌ 채점 결과가 없습니다."); return
     update_leaderboard(result)
+    update_statistics(result)
 
 def verify(password):
     return password == ADMIN_PASSWORD
@@ -48,10 +49,11 @@ def download_submissions():
         if not answer_files:
             st.error(f"⚠️ `{answer_path}` 폴더에 정답 NetCDF 파일이 존재하지 않습니다.")
             return None
-        elif not submission_files:
+        if not submission_files:
             st.warning(f"⚠️ `{submission_path}` 폴더에 답안 NetCDF 파일이 존재하지 않습니다.")
-        else:
-            st.write(f"📦 `{answer_path}`폴더와 `{submission_path}` 폴더에서 총 {len(submission_files) + 1}개의 NetCDF 파일을 발견했습니다.")
+            return None
+
+        st.write(f"📦 `{answer_path}`폴더와 `{submission_path}` 폴더에서 총 {len(submission_files) + 1}개의 NetCDF 파일을 발견했습니다.")
 
     # 임시 디렉토리 생성 (with 블록을 빠져나오면 자동으로 삭제됨)
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -170,22 +172,20 @@ def update_leaderboard(result):
     st.info("🔄 리더보드 업데이트를 시작합니다.")
     progress_bar = st.progress(0)
 
+    lookup_rows = client.table("team_name_lookup").select("*").execute()
+    df_lookup = pd.DataFrame(lookup_rows.data)
+
     for idx, row in enumerate(result):
-        st.write(f"📤 채점 결과 업데이트 중 ({idx + 1}/{len(result)}): {row["team_name"]} 팀")
+        st.write(f"📤 리더보드 업데이트 중 ({idx + 1}/{len(result)}): {row['team_name']} 팀")
 
-        # 한글 팀명 lookup
-        lookup_rows = client.table("team_name_lookup").select("*").execute()
-        df = pd.DataFrame(lookup_rows.data)
-
-        matched_row = df[df["converted_team_name"] == row["team_name"]]
-
+        matched_row = df_lookup[df_lookup["converted_team_name"] == row["team_name"]]
         if not matched_row.empty:
             row["team_name"] = matched_row["original_team_name"].iloc[0]
 
         try:
             response = client.rpc(
                 "upsert_leaderboard", {
-                    "p_team_name": str(row["team_name"]),
+                    "p_team_name": row["team_name"],
                     "p_new_score": float(row["score"])
                 }
             ).execute()
@@ -195,6 +195,35 @@ def update_leaderboard(result):
             return
 
     st.success("✨ 리더보드 업데이트가 완료되었습니다.")
+
+def update_statistics(result):
+    st.info("🔄 통계 업데이트를 시작합니다.")
+    progress_bar = st.progress(0)
+
+    lookup_rows = client.table("team_name_lookup").select("*").execute()
+    df_lookup = pd.DataFrame(lookup_rows.data)
+
+    for idx, row in enumerate(result):
+        st.write(f"📤 통계 업데이트 중 ({idx + 1}/{len(result)}): {row['team_name']} 팀")
+
+        matched_row = df_lookup[df_lookup["converted_team_name"] == row["team_name"]]
+        if not matched_row.empty:
+            row["team_name"] = matched_row["original_team_name"].iloc[0]
+
+        try:
+            is_error = row["score"] == 999
+            insert_data = {
+                "team_name": row["team_name"],
+                "score": None if is_error else row["score"],
+                "status": "ERROR" if is_error else "OK"
+            }
+            response = client.table("statistics").insert(insert_data).execute()
+            progress_bar.progress((idx + 1) / len(result))
+        except Exception as e:
+            st.error(f"❌ DB 반영 중 오류 발생 ({row['team_name']}): {e}")
+            return
+
+    st.success("✨ 통계 업데이트가 완료되었습니다.")
 
 def load_nc(path: str | Path):
     with xr.open_dataset(path) as ds:

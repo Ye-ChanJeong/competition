@@ -2,6 +2,7 @@ import base64
 
 import pandas as pd
 import streamlit as st
+import altair as alt
 from PIL import Image
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 from st_supabase_connection import SupabaseConnection
@@ -56,6 +57,124 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
+@st.cache_data(ttl=60)
+def load_statistics():
+    response = (
+        client.table("statistics")
+        .select("date, team_name, score")
+        .eq("status", "OK")
+        .order("date", desc=False)
+        .execute()
+    )
+    df = pd.DataFrame(response.data)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"])
+    return df
+
+@st.cache_data(ttl=60)
+def load_top_5_team_name():
+    response = (
+        client.table("leaderboard")
+        .select("team_name")
+        .order("best_score", desc=False)
+        .limit(5)
+        .execute()
+    )
+    result = response.data
+    top_5 = [d['team_name'] for d in result]
+    return top_5
+
+@st.fragment
+def render_chart(df: pd.DataFrame, top_5):
+    chart_container = st.container()
+
+    min_date = df["date"].min().date()
+    max_date = df["date"].max().date()
+
+    if min_date < max_date:
+        selected_dates = st.slider(
+            "날짜 선택",
+            min_value=min_date,
+            max_value=max_date,
+            value=(min_date, max_date),
+            format="MM-DD",
+            label_visibility="collapsed",
+        )
+    else:
+        selected_dates = (min_date, max_date)
+
+    all_teams = sorted(df["team_name"].unique().tolist())
+    selected_teams = st.multiselect(
+        "팀 선택",
+        options=all_teams,
+        default=top_5,
+        label_visibility="collapsed",
+    )
+
+    use_log_scale = st.toggle("log scale", value=False)
+
+    filtered_df = df[
+        (df["date"].dt.date >= selected_dates[0])
+        & (df["date"].dt.date <= selected_dates[1])
+        & (df["team_name"].isin(selected_teams))
+    ]
+
+    if use_log_scale:
+        filtered_df = filtered_df[filtered_df["score"] > 0]
+
+    with chart_container:
+        if not filtered_df.empty:
+            scale_type = "log" if use_log_scale else "linear"
+
+            raw_min = float(filtered_df["score"].min())
+            raw_max = float(filtered_df["score"].max())
+
+            if raw_min == raw_max:
+                y_min = raw_min * 0.95
+                y_max = raw_max * 1.05
+            else:
+                margin = (raw_max - raw_min) * 0.05
+                y_min = raw_min - margin
+                y_max = raw_max + margin
+
+                if use_log_scale and y_min <= 0:
+                    y_min = raw_min * 0.95
+
+            base = alt.Chart(filtered_df).encode(
+                x=alt.X(
+                    "date:T",
+                    title="날짜",
+                    axis=alt.Axis(format="%m-%d"),
+                ),
+                y=alt.Y(
+                    "score:Q",
+                    title="점수",
+                    scale=alt.Scale(
+                        type=scale_type,
+                        domain=[y_min, y_max],
+                        nice=False,
+                        zero=False,
+                    ),
+                    axis=alt.Axis(format=".2f", tickCount=6),
+                ),
+                color=alt.Color("team_name:N", title="팀"),
+            )
+
+            line = base.mark_line()
+            point = base.mark_point(filled=True, size=60).encode(
+                tooltip=[
+                    alt.Tooltip("date:T", title="날짜", format="%Y-%m-%d"),
+                    alt.Tooltip("team_name:N", title="팀"),
+                    alt.Tooltip("score:Q", title="점수"),
+                ]
+            )
+
+            chart = (line + point).interactive()
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("표시할 데이터가 없습니다.")
+
 @st.dialog("제출하시겠습니까?")
 def submit_confirm_dialog():
     st.write("답안은 하루에 한 번만 제출할 수 있습니다.")
@@ -84,19 +203,21 @@ def review_confirm_dialog():
             st.rerun()
 
 
+conn = st.connection("supabase", type=SupabaseConnection)
+client = conn.client
+
 with st.sidebar:
     selected = option_menu(
         menu_title=None,
-        options=["Leaderboard", "Submit", "Rules", "Info"],
+        options=["Leaderboard", "Statistics", "Submit", "Rules", "Info"],
         default_index=0,
         styles={
             "container": {"padding": "5px!"},
             "nav-link": {"font-size": "16px", "text-align": "left", "margin": "0px"},
-            "nav-link-selected": {"font-weight": "normal", "background-color": "#02ab21"},
+            "nav-link-selected": {"font-weight": "normal"},
         }
     )
 
-# 클라이언트의 화면 너비(px) 가져오기
 ui_width = st_javascript("window.innerWidth")
 
 if ui_width < 768:
@@ -153,11 +274,12 @@ with center:
             unsafe_allow_html=True
         )
 
-        conn = st.connection("supabase", type=SupabaseConnection)
-        client = conn.client
-
         try:
-            rows = client.table("leaderboard").select("*").execute()
+            rows = (
+                client.table("leaderboard")
+                .select("*")
+                .execute()
+            )
 
             if not rows.data:
                 st.info("리더보드 데이터가 없습니다.")
@@ -406,6 +528,28 @@ with center:
 
         except Exception as e:
             st.error(f"오류 발생: {e}")
+
+    if selected == "Statistics":
+        st.markdown(
+            "<h2 style='margin-top: 0px; margin-bottom: 4px; padding-top: 0px; padding-bottom: 0px;'>"
+            "Statistics"
+            "</h2>",
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            '<p style="margin-top: 0px; margin-bottom: 32px; padding-top: 0px; padding-bottom: 0px; color: gray; font-size: 14px; line-height: 1.3;">'
+            'NaN 마스킹이 일치하지 않거나, 값이 있어야 하는 유효한 격자에 NaN이 포함된 제출물은 반영되지 않습니다.'
+            '</p>',
+            unsafe_allow_html=True
+        )
+
+        df = load_statistics()
+        top_5_team_name = load_top_5_team_name()
+        if not df.empty:
+            render_chart(df, top_5_team_name)
+        else:
+            st.warning("DB에서 불러온 데이터가 없습니다.")
 
     if selected == "Submit":
         st.markdown(

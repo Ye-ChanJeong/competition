@@ -10,3 +10,4 @@ numpy
 streamlit-aggrid
 streamlit-javascript
 pillow
+altair

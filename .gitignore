@@ -1,6 +1,6 @@
 .streamlit/secrets.toml
 .aiignore
 workspace
-.venv
+.env
 __pycache__
 .idea

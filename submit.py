@@ -63,7 +63,7 @@ def upload(file):
             curr_time = datetime.now(ZoneInfo("Asia/Seoul")).time()
             cutoff_time = time(22, 0, 0)
 
-            upload_date = next_date if curr_time >= cutoff_time else curr_date
+            upload_date = curr_date if curr_time < cutoff_time else next_date
 
             mm_dd = upload_date.strftime("%m-%d")
 
