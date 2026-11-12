@@ -112,7 +112,11 @@ def render_chart(df: pd.DataFrame, top_5):
         label_visibility="collapsed",
     )
 
-    use_log_scale = st.toggle("log scale", value=False)
+    col_log, col_inv, _ = st.columns([1, 1, 5])
+    with col_log:
+        use_log_scale = st.toggle("log scale", value=False)
+    with col_inv:
+        use_invert = st.toggle("vertical flip", value=True)
 
     filtered_df = df[
         (df["date"].dt.date >= selected_dates[0])
@@ -153,6 +157,7 @@ def render_chart(df: pd.DataFrame, top_5):
                     scale=alt.Scale(
                         type=scale_type,
                         domain=[y_min, y_max],
+                        reverse=use_invert,
                         nice=False,
                         zero=False,
                     ),
