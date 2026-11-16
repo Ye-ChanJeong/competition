@@ -1,13 +1,16 @@
 import base64
 
+import altair as alt
 import pandas as pd
 import streamlit as st
-import altair as alt
 from PIL import Image
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 from st_supabase_connection import SupabaseConnection
 from streamlit_javascript import st_javascript
 from streamlit_option_menu import option_menu
+
+from review import review
+from submit import submit
 
 LOGO = Image.open("public/CERL_logo.png")
 LOGO_BASE64 = base64.b64encode(open("public/CERL_logo.png", "rb").read()).decode()
@@ -17,9 +20,6 @@ st.set_page_config(
     page_icon=LOGO,
     layout="wide"
 )
-
-from review import review
-from submit import submit
 
 st.markdown(
     """
@@ -176,7 +176,7 @@ def render_chart(df: pd.DataFrame, top_5):
             )
 
             chart = (line + point).interactive()
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
         else:
             st.info("표시할 데이터가 없습니다.")
 
@@ -185,11 +185,11 @@ def submit_confirm_dialog():
     st.write("답안은 하루에 한 번만 제출할 수 있습니다.")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("확인", use_container_width=True, key="confirm_button-1"):
+        if st.button("확인", width="stretch", key="confirm_button-1"):
             st.session_state.submit_confirmed = True
             st.rerun()
     with col2:
-        if st.button("취소", use_container_width=True, key="cancel_button-1"):
+        if st.button("취소", width="stretch", key="cancel_button-1"):
             st.session_state.submit_confirmed = False
             st.rerun()
 
@@ -199,11 +199,11 @@ def review_confirm_dialog():
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("확인", use_container_width=True, key="confirm_button-2"):
+        if st.button("확인", width="stretch", key="confirm_button-2"):
             st.session_state.review_confirmed = True
             st.rerun()
     with col2:
-        if st.button("취소", use_container_width=True, key="cancel_button-2"):
+        if st.button("취소", width="stretch", key="cancel_button-2"):
             st.session_state.review_confirmed = False
             st.rerun()
 
@@ -280,97 +280,47 @@ with center:
         )
 
         try:
-            rows = (
-                client.table("leaderboard")
-                .select("*")
-                .execute()
-            )
+            rows = client.table("leaderboard").select("*").execute()
 
             if not rows.data:
                 st.info("리더보드 데이터가 없습니다.")
             else:
                 df = pd.DataFrame(rows.data)
 
-                df["best_score"] = pd.to_numeric(df["best_score"])
-                df["recent_score"] = pd.to_numeric(df["recent_score"])
+                for col in ["best_score", "recent_score"]:
+                    df[col] = pd.to_numeric(df[col])
+                    if ui_width <= 768:
+                        df[col] = df[col].round(3)
 
-                if ui_width <= 768:
-                    df["best_score"] = df["best_score"].round(3)
-                    df["recent_score"] = df["recent_score"].round(3)
+                best_dates = pd.to_datetime(df["best_score_date"]).dt.strftime("%m-%d")
+                recent_dates = pd.to_datetime(df["recent_score_date"]).dt.strftime("%m-%d")
 
-                df["best_score_date"] = pd.to_datetime(df["best_score_date"])
-                df["recent_score_date"] = pd.to_datetime(df["recent_score_date"])
+                df["최고 점수 (제출 일자)"] = df["best_score"].astype(str) + " (" + best_dates + ")"
+                df["최근 점수 (제출 일자)"] = df["recent_score"].astype(str) + " (" + recent_dates + ")"
 
-                df = df.assign(**{
-                    "best_score_info": lambda x: x["best_score"].astype(str) + " (" + x["best_score_date"].dt.strftime("%m-%d").astype(str) + ")"
-                })
-                df = df.assign(**{
-                    "recent_score_info": lambda x: x["recent_score"].astype(str) + " (" + x["recent_score_date"].dt.strftime("%m-%d").astype(str) + ")"
-                })
-
-                df = df.sort_values(by="best_score", ascending=True)
-                df = df.reset_index(drop=True)
-                df = df.set_index(df.index + 1)
-                df = df.reset_index()
-
-                df = df.rename(columns={
-                    "index": "순위",
-                    "team_name": "참가한 팀",
-                    "best_score_info": "최고 점수 (제출 일자)",
-                    "recent_score_info": "최근 점수 (제출 일자)",
-                    "attempts": "제출 횟수"
-                })
-
-                df = df.drop(columns=["best_score", "recent_score", "best_score_date", "recent_score_date"], errors="ignore")
+                df = df.sort_values(by="best_score", ascending=True).reset_index(drop=True)
+                df.insert(0, "순위", df.index + 1)
+                df = df.rename(columns={"team_name": "참가한 팀", "attempts": "제출 횟수"})
                 df = df[["순위", "참가한 팀", "최고 점수 (제출 일자)", "최근 점수 (제출 일자)", "제출 횟수"]]
 
-                gb = GridOptionsBuilder.from_dataframe(df)
-
+                # JS 렌더러 정의
                 header_renderer = JsCode("""
                 class CustomHeader {
                     init(params) {
                         this.eGui = document.createElement('div');
-                        this.eGui.style.display = 'flex';
-                        this.eGui.style.flexWrap = 'wrap';
-                        this.eGui.style.alignItems = 'center';
-                        this.eGui.style.justifyContent = 'center';
-                        this.eGui.style.textAlign = 'center';
-                        this.eGui.style.whiteSpace = 'normal';
-                        this.eGui.style.wordBreak = 'keep-all';
-                        this.eGui.style.width = '100%';
-                        this.eGui.style.height = '100%';
-                        this.eGui.style.gap = '3px';
-
-                        const uiWidth = window.innerWidth;
-                        const headerName = params.displayName;
-                        const match = headerName.match(/^(.+?)\\s*(\\(.+\\))$/);
-
-                        let offset = 0;
-                        if (uiWidth < 768) { offset = offset - 2; }
+                        this.eGui.style.cssText = 'display:flex; flex-wrap:wrap; align-items:center; justify-content:center; text-align:center; white-space:normal; word-break:keep-all; width:100%; height:100%; gap:3px;';
+                        const offset = window.innerWidth < 768 ? -2 : 0;
+                        const match = params.displayName.match(/^(.+?)\\s*(\\(.+\\))$/);
 
                         if (match) {
-                            const title = match[1];
-                            const sub = match[2];
                             this.eGui.innerHTML = `
-                                <span style="font-size: ${20 + offset}px; font-weight:normal; line-height: 1.0;">
-                                    ${title}
-                                </span>
-                                <span style="font-size: ${12 + offset}px; color: gray; font-weight:normal; line-height: 1.0;">
-                                    ${sub}
-                                </span>
-                            `;
+                                <span style="font-size: ${20 + offset}px; font-weight: normal; line-height: 1.0;">${match[1]}</span>
+                                <span style="font-size: ${12 + offset}px; color: gray; font-weight: normal; line-height: 1.0;">${match[2]}</span>`;
                         } else {
-                            this.eGui.innerHTML = `
-                                <span style="font-size: ${20 + offset}px; font-weight: normal;">
-                                    ${headerName}
-                                </span>
-                            `;
+                            this.eGui.innerHTML = `<span style="font-size: ${20 + offset}px; font-weight: normal;">${params.displayName}</span>`;
                         }
                     }
-
-                    getGui() {
-                        return this.eGui;
-                    }
+                    getGui() { return this.eGui; }
                 }
                 """)
 
@@ -378,153 +328,64 @@ with center:
                 class CellRenderer {
                     init(params) {
                         this.eGui = document.createElement('div');
-                        this.eGui.style.display = 'flex';
-                        this.eGui.style.flexWrap = 'wrap';
-                        this.eGui.style.alignItems = 'center';
-                        this.eGui.style.justifyContent = 'center';
-                        this.eGui.style.textAlign = 'center';
-                        this.eGui.style.whiteSpace = 'normal';
-                        this.eGui.style.wordBreak = 'keep-all';
-                        this.eGui.style.width = '100%';
-                        this.eGui.style.height = '100%';
-                        this.eGui.style.gap = '4px';
-
-                        const rowIndex = params.node.rowIndex;
-
-                        const uiWidth = window.innerWidth;
-                        const cellValue = params.value;
-                        let match = null;
-                        if (typeof cellValue === "string") {
-                            match = cellValue.match(/^(.+?)\\s*(\\(.+\\))$/);
-                        }
-
-                        let offset = 0;
-                        if (uiWidth < 768) {
-                            offset = offset - 2;
-                        }
+                        this.eGui.style.cssText = 'display:flex; flex-wrap:wrap; align-items:center; justify-content:center; text-align:center; white-space:normal; word-break:keep-all; width:100%; height:100%; gap:4px;';
+                        const isTop5 = params.node.rowIndex < 5;
+                        const offset = window.innerWidth < 768 ? -2 : 0;
+                        const match = typeof params.value === "string" ? params.value.match(/^(.+?)\\s*(\\(.+\\))$/) : null;
 
                         if (match) {
-                            let score = match[1];
-                            const date = match[2];
-
-                            if (rowIndex === 0 || rowIndex === 1 || rowIndex === 2 || rowIndex === 3 || rowIndex === 4) {
-                                this.eGui.innerHTML = `
-                                    <span style="font-size: ${28 + 2 * offset}px; font-weight: 500; font-style: italic; line-height: 1.0;">
-                                        ${score}
-                                    </span>
-                                    <span style="font-size: ${14 + offset}px; color: black; font-weight: 500; line-height: 1.0;">
-                                        ${date}
-                                    </span>
-                                `;
-                            } else {
-                                this.eGui.innerHTML = `
-                                    <span style="font-size: 18px; line-height: 1.0;">
-                                        ${score}
-                                    </span>
-                                    <span style="font-size: 12px; color: gray; line-height: 1.0;">
-                                        ${date}
-                                    </span>
-                                `;
-                            }
+                            const [scoreSize, dateSize, dateColor, weight] = isTop5 
+                                ? [`${28 + 2 * offset}px`, `${14 + offset}px`, 'black', '500; font-style: italic'] 
+                                : ['18px', '12px', 'gray', 'normal'];
+                            this.eGui.innerHTML = `
+                                <span style="font-size: ${scoreSize}; font-weight: ${weight}; line-height: 1.0;">${match[1]}</span>
+                                <span style="font-size: ${dateSize}; color: ${dateColor}; font-weight: ${isTop5 ? '500' : 'normal'}; line-height: 1.0;">${match[2]}</span>`;
                         } else {
-                            if (rowIndex === 0 || rowIndex === 1 || rowIndex === 2 || rowIndex === 3 || rowIndex === 4) {
-                                this.eGui.innerHTML = `
-                                    <span style="font-size: 28px; font-weight: 500; font-style: italic;">
-                                        ${cellValue}
-                                    </span>
-                                `;
-                            } else {
-                                this.eGui.innerHTML = `
-                                    <span style="font-size: 18px;">
-                                        ${cellValue}
-                                    </span>
-                                `;
-                            }
+                            const style = isTop5 ? 'font-size: 28px; font-weight: 500; font-style: italic;' : 'font-size: 18px;';
+                            this.eGui.innerHTML = `<span style="${style}">${params.value}</span>`;
                         }
                     }
-
-                    getGui() {
-                        return this.eGui;
-                    }
+                    getGui() { return this.eGui; }
                 }
                 """)
 
                 row_style = JsCode("""
                 function(params) {
-                    if (params.node.rowIndex === 0) {
-                        return {
-                            'background': 'linear-gradient(90deg, #FFE066 0%, #F5A623 100%)',
-                        };
-                    } else if (params.node.rowIndex === 1) {
-                        return {
-                            'background': 'linear-gradient(90deg, #E0E0E0 0%, #9EA7B0 100%)',
-                        };
-                    } else if (params.node.rowIndex === 2) {
-                        return {
-                            'background': 'linear-gradient(90deg, #E5A97F 0%, #B36B3D 100%)',
-                        };
-                    } else if (params.node.rowIndex === 3 || params.node.rowIndex === 4) {
-                        return {
-                            'background': 'linear-gradient(90deg, #FFFFFF 0%, #FFEFBA 100%)',
-                        };
-                    }
-                }
-                """)
-
-                row_height = JsCode("""
-                function(params) {
-                    if (params.node.rowIndex === 0 || params.node.rowIndex === 1 || params.node.rowIndex === 2 || params.node.rowIndex === 3 || params.node.rowIndex === 4) {
-                        return 54;
-                    }
-                    return 36;
+                    const gradients = [
+                        'linear-gradient(90deg, #FFE066 0%, #F5A623 100%)', // 1위
+                        'linear-gradient(90deg, #E0E0E0 0%, #9EA7B0 100%)', // 2위
+                        'linear-gradient(90deg, #E5A97F 0%, #B36B3D 100%)', // 3위
+                        'linear-gradient(90deg, #FFFFFF 0%, #FFEFBA 100%)', // 4위
+                        'linear-gradient(90deg, #FFFFFF 0%, #FFEFBA 100%)'  // 5위
+                    ];
+                    const bg = gradients[params.node.rowIndex];
+                    return bg ? { background: bg } : null;
                 }
                 """)
 
                 custom_css = {
-                    ".ag-header-cell-menu-button, .ag-header-icon": {
-                        "display": "none !important",
-                    },
-                    ".ag-row .ag-cell": {
-                        "display": "flex !important",
-                        "align-items": "center !important",
-                        "justify-content": "center !important",
-                    }
+                    ".ag-header-cell-menu-button, .ag-header-icon": {"display": "none !important"},
+                    ".ag-row .ag-cell": {"display": "flex !important", "align-items": "center !important", "justify-content": "center !important"}
                 }
 
+                gb = GridOptionsBuilder.from_dataframe(df)
                 gb.configure_default_column(
-                    resizable=False,
-                    sortable=False,
-                    filterable=False,
-                    editable=False,
-                    groupable=False,
-                    headerComponent=header_renderer,
-                    cellRenderer=cell_renderer,
+                    resizable=False, sortable=False, filterable=False, editable=False, groupable=False,
+                    headerComponent=header_renderer, cellRenderer=cell_renderer, wrapText=True, autoHeight=True
                 )
-
                 gb.configure_column("순위", sort="asc", width=90)
                 gb.configure_column("제출 횟수", width=120)
-
                 gb.configure_grid_options(
                     getRowStyle=row_style,
-                    getRowHeight=row_height,
-                    onGridReady=JsCode("function(params) { params.api.sizeColumnsToFit(); }"),
-                    onGridSizeChanged=JsCode("function(params) { params.api.sizeColumnsToFit(); }"),
-                    wrapText=True,
-                    autoHeight=True,
+                    getRowHeight=JsCode("params => params.node.rowIndex < 5 ? 54 : 36"),
+                    onGridReady=JsCode("params => params.api.sizeColumnsToFit()"),
+                    onGridSizeChanged=JsCode("params => params.api.sizeColumnsToFit()"),
+                    wrapText=True, autoHeight=True, wrapHeaderText=True, autoHeaderHeight=True, headerHeight=None
                 )
-
-                grid_options = gb.build()
-                grid_options["headerHeight"] = None
-                grid_options["wrapHeaderText"] = True
-                grid_options["autoHeaderHeight"] = True
-                grid_options["defaultColDef"].update({
-                    "wrapText": True,
-                    "autoHeight": True
-                })
 
                 AgGrid(
                     df,
-                    gridOptions=grid_options,
+                    gridOptions=gb.build(),
                     fit_columns_on_grid_load=True,
                     theme="alpine",
                     custom_css=custom_css,
@@ -584,7 +445,7 @@ with center:
         with name_input:
             student_name = st.text_input("이름을 입력하세요.")
         with submit_button:
-            if st.button("제출하기", key="progress_button-1", use_container_width=True):
+            if st.button("제출하기", key="progress_button-1", width="stretch"):
                 submit_confirm_dialog()
 
         st.markdown(
@@ -622,7 +483,7 @@ with center:
         with password_input:
             password = st.text_input("관리자 비밀번호를 입력하세요.", type="password")
         with review_button:
-            if st.button("검토하기", key="progress_button-2", use_container_width=True):
+            if st.button("검토하기", key="progress_button-2", width="stretch"):
                 review_confirm_dialog()
 
         st.markdown(

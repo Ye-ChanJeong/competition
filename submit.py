@@ -56,6 +56,7 @@ def upload(file):
     with st.spinner("업로드 중..."):
         try:
             file_bytes = file.getvalue()
+            file_name = file.name
 
             curr_date = datetime.now(ZoneInfo("Asia/Seoul"))
             next_date = datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(days=1)
@@ -74,14 +75,12 @@ def upload(file):
             df = pd.DataFrame(lookup_rows.data)
 
             matched_row = df[df["original_team_name"] == submit_team_name]
-
-            filename = file.name
             if not matched_row.empty:
                 converted_name = matched_row["converted_team_name"].iloc[0]
-                filename = file.name[:7] + converted_name + file.name[-3:]
+                file_name = file.name[:7] + converted_name + file.name[-3:]
 
             bucket_name = "pknu_climate_big_data_contest_2026"
-            storage_path = f"submissions/{mm_dd}/{filename}"
+            storage_path = f"submissions/{mm_dd}/{file_name}"
 
             response = client.storage.from_(bucket_name).upload(
                 path=storage_path,
@@ -92,7 +91,7 @@ def upload(file):
                 }
             )
 
-            st.success(f"🎉 업로드 성공! `{file.name}`")
+            st.success(f"🎉 업로드 성공! `{file_name}`")
 
         except Exception as e:
             st.error(f"❌ 업로드 실패: {str(e)}")
