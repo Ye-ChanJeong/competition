@@ -12,7 +12,7 @@ from st_supabase_connection import SupabaseConnection
 
 ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
 
-TARGET_VAR = os.environ.get("TARGET_VAR", "Vcmax25")
+TARGET_VAR = "Vcmax25"
 REQUIRED_DIMS = ("time", "lat", "lon")
 
 

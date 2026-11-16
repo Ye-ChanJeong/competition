@@ -1,6 +1,6 @@
 # 기상·기후 환경분야 빅데이터 경진대회 플랫폼
 
-부경대학교 **기후극한연구실(Climate Extremes Research Laboratory, CERL)** 에서 주최 및 운영하는 빅데이터 경진대회의 웹 플랫폼입니다.  
+부경대학교 **극한기후연구실(Climate Extremes Research Laboratory, CERL)** 에서 주최 및 운영하는 빅데이터 경진대회의 웹 플랫폼입니다.  
 참가자의 예측 데이터(`NetCDF`, `.nc`) 제출, 참가 자격 검증, 채점(MAE 평가) 및 실시간 리더보드/통계 시각화를 제공합니다.
 
 ---
